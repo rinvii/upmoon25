@@ -5,17 +5,13 @@ import subprocess
 import time
 import os
 import numpy as np
-import quaternion
 from pathlib import Path
 
 from enum import Enum
 from rclpy.node import Node
-from std_msgs.msg import Float32, Int16, Int32
+from std_msgs.msg import Int16, Int32
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
-from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
-from tf2_ros.transform_broadcaster import TransformBroadcaster
-from geometry_msgs.msg import TransformStamped, PoseWithCovariance
 from sensor_msgs.msg import JointState
 
 '''
@@ -40,8 +36,8 @@ from sensor_msgs.msg import JointState
 
 DEBUG = False
 FLASH_ON_START = os.environ.get("LUNAR_FLASH_ARDUINO_ON_START", "0") == "1"
-PAN_MAX = 170
-PAN_MIN = 10
+PAN_MAX = 180
+PAN_MIN = 0
 ARDUINO_PAN_PIN = 3
 ARDUINO_CAM_HEIGHT_PIN = 9
 ARDUINO_BUCKET_PIN = 10

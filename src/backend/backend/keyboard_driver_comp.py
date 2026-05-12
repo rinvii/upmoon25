@@ -17,7 +17,7 @@ import pygame
 
 from rclpy.node import Node
 
-from pygame.locals import *
+from pygame.locals import KEYDOWN, KEYUP, QUIT
 
 from std_msgs.msg import Int16, Int8
 
@@ -46,6 +46,8 @@ class MinimalDriver(Node):
         pygame.display.set_caption('bbot driver')
 
         self.throttle = 100.0
+
+        self.cam_height = 0
 
         self.FPS = 60
 

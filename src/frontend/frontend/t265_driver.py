@@ -7,7 +7,6 @@ import sensor_msgs.msg as sensor_msgs
 from tf2_ros.transform_broadcaster import TransformBroadcaster
 from geometry_msgs.msg import Vector3, Pose, PoseWithCovariance, Point, Quaternion, Twist, TwistWithCovariance, TransformStamped
 from nav_msgs.msg import Odometry
-import quaternion
 import time as pytime
 import cv2
 

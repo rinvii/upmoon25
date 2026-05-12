@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-import serial.tools.list_ports
+from lunar.camera_pan_limits import clamp_pan_degrees
 
 from .keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, KEYBOARD_SENSOR_TOPICS
 
@@ -21,6 +21,8 @@ def _clamp_float(value: float, low: float, high: float) -> float:
 
 
 def _detect_arduino_port() -> Optional[Path]:
+    import serial.tools.list_ports
+
     try:
         for port in serial.tools.list_ports.comports():
             vid = None if port.vid is None else f"{port.vid:04x}"
@@ -193,7 +195,7 @@ class RobotActuators:
         return self._publish_int("camera-height", value)
 
     def set_pan(self, value: int) -> bool:
-        value = _clamp(value, 10, 170)
+        value = clamp_pan_degrees(value)
         if self.serial is not None:
             try:
                 self.serial.write(f"{ARDUINO_PAN_PIN}:{value}\n".encode("utf-8"))
@@ -530,7 +532,7 @@ def run_keyboard_tui(
                 self.last_result = "pan disabled"
                 self._refresh_view()
                 return
-            self.pan = _clamp(value, 10, 170)
+            self.pan = clamp_pan_degrees(value)
             self.last_pan_ts = time.monotonic()
             self.position_refresh_until = max(self.position_refresh_until, self.last_pan_ts + 0.75)
             self._set_result(self.actuator.set_pan(self.pan))

@@ -27,3 +27,6 @@ field_photos/
 
 # Lunar local runtime logs
 .lunar/dashboard.log
+
+# local CI venv (not required — GitHub Actions installs linters globally)
+.ci-venv

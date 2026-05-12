@@ -20,9 +20,9 @@ for path in (repo_root, package_root):
     if path_str not in sys.path:
         sys.path.append(path_str)
 
-from lunar.dashboard.state import store
-from lunar.dashboard.components.hardware import render_hardware_panel
-from lunar.dashboard.components.teleop import render_hold_controls
+from lunar.dashboard.state import store  # noqa: E402
+from lunar.dashboard.components.hardware import render_hardware_panel  # noqa: E402
+from lunar.dashboard.components.teleop import render_hold_controls  # noqa: E402
 
 BRIDGE_IMPORT_ERROR = None
 UI_REFRESH_SEC = 0.2
@@ -464,8 +464,8 @@ def _render_command_controls():
         st.markdown('<div class="compact-card"><h4>Camera</h4></div>', unsafe_allow_html=True)
         camera_pan = st.slider(
             "Pan",
-            10,
-            170,
+            0,
+            180,
             key="camera_pan",
             disabled=not ros_live,
         )
@@ -669,7 +669,9 @@ with st.sidebar:
         ni_i = st.slider("Ki (Integral)", 0.0, 5.0, float(state.ki), 0.01)
         nd_d = st.slider("Kd (Derivative)", 0.0, 5.0, float(state.kd), 0.01)
         if st.button("Apply Gains", use_container_width=True):
-            if get_node(): get_node().publish_pid(np_p, ni_i, nd_d)
+            bridge = get_node()
+            if bridge:
+                bridge.publish_pid(np_p, ni_i, nd_d)
             st.toast("PID Gains Updated!")
     
     st.divider()
@@ -707,15 +709,21 @@ with tab_data:
         fname = st.text_input("Bag Name", "mission_data")
         if not state.is_recording:
             if st.button("🔴 Start Recording", use_container_width=True):
-                if get_node(): get_node().toggle_recording(fname)
+                bridge = get_node()
+                if bridge:
+                    bridge.toggle_recording(fname)
         else:
             if st.button("⏹️ Stop Recording", type="primary", use_container_width=True):
-                if get_node(): get_node().toggle_recording(fname)
+                bridge = get_node()
+                if bridge:
+                    bridge.toggle_recording(fname)
             st.warning(f"Recording: {state.bag_filename}")
     with c_map:
         mname = st.text_input("Map Name", "lunar_v1")
         if st.button("💾 Save Map", use_container_width=True):
-            if get_node(): get_node().save_map(mname)
+            bridge = get_node()
+            if bridge:
+                bridge.save_map(mname)
             st.success("Map saving triggered.")
 
     st.divider()

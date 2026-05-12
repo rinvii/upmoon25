@@ -593,7 +593,7 @@ def _run_terminal_subsystem_keyboard(
 
     def set_pan(value: int):
         nonlocal pan
-        pan = max(10, min(170, int(value)))
+        pan = max(0, min(180, int(value)))
         if direct_ready and arduino.write(ARDUINO_PAN_PIN, pan):
             return
         publish(pub_pan, pan)
@@ -1138,7 +1138,7 @@ def act(
             )
             raise typer.Exit(code=2)
 
-        int_value = max(10, min(170, int_value))
+        int_value = max(0, min(180, int_value))
         if _write_arduino_value(ARDUINO_PAN_PIN, int_value):
             typer.echo(f"Acting on {actuator.value}: direct-serial angle={int_value} -> Arduino pin {ARDUINO_PAN_PIN}")
             return
@@ -1199,8 +1199,9 @@ def lint():
     It scans `src/backend` and `lunar/src` (see repo-root `pyproject.toml` for excludes).
     """
     root = find_repo_root()
+    lint_paths = ["lunar/src", "src/frontend", "src/backend"]
     ty_python = root / "lunar" / ".venv" / "bin" / "python"
-    ty_cmd = ["uvx", "ty", "check", "src/backend", "lunar/src"]
+    ty_cmd = ["uvx", "ty", "check", *lint_paths]
     if ty_python.exists():
         ty_cmd.extend(["--python", str(ty_python)])
 
@@ -1210,7 +1211,7 @@ def lint():
     typer.echo("")
 
     typer.secho("--- Running 'ruff check' ---", fg=typer.colors.CYAN, bold=True)
-    res_ruff = subprocess.run(["uvx", "ruff", "check", "src/backend", "lunar/src"], cwd=str(root))
+    res_ruff = subprocess.run(["uvx", "ruff", "check", *lint_paths], cwd=str(root))
 
     if res_ty.returncode == 0 and res_ruff.returncode == 0:
         typer.secho("\n✨ All lint checks passed!", fg=typer.colors.GREEN, bold=True)
@@ -1420,7 +1421,7 @@ def check(
     def run_cmd(cmd, timeout=2.0):
         try:
             return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout
-        except (subprocess.TimeoutExpired, OSError):
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError):
             return ""
 
     # --- Hardware Checks ---
@@ -1749,7 +1750,11 @@ def check(
     typer.echo("\n[Recent Errors/Warnings]")
     if results["recent_errors"]:
         for err_line in results["recent_errors"]:
-            color = typer.colors.RED if "ERROR" in err_line.upper() or "died" in err_line.upper() else typer.colors.YELLOW
+            color = (
+                typer.colors.RED
+                if "ERROR" in err_line.upper() or "died" in err_line.lower()
+                else typer.colors.YELLOW
+            )
             typer.secho(f"  {err_line}", fg=color)
     else:
         typer.secho("  No critical errors found in log.", fg=typer.colors.GREEN)

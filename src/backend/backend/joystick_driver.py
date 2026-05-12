@@ -17,7 +17,7 @@ import pygame
 
 from rclpy.node import Node
 
-from pygame.locals import *
+from pygame.locals import QUIT
 
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Int16

@@ -1,17 +1,32 @@
 [project]
 name = "upmoon25-workspace"
 version = "0"
+description = "ROS 2 + lunar tooling; workspace-level lint config"
+readme = "README.md"
 requires-python = ">=3.8"
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["lunar/src", "src/frontend"]
+addopts = "-ra"
 
 [tool.ruff]
 exclude = [
-    ".research",
+    ".ci-venv",
     ".git",
+    ".research",
+    ".venv",
     "build",
     "install",
     "log",
+    "lunar/.venv",
 ]
 line-length = 120
+src = ["lunar/src", "src/frontend", "src/backend"]
+target-version = "py38"
 
 [tool.ruff.lint.per-file-ignores]
 "src/backend/test/*.py" = ["E402"]
@@ -21,8 +36,7 @@ line-length = 120
 "src/backend/backend/keyboard_driver_comp.py" = ["F403", "F405"]
 "src/backend/backend/rc_controller.py" = ["F403", "F405"]
 
-# ROS/rclpy stubs are not in the dev venv; unresolved imports are ignored. Other issues downgrade
-# to warnings so `ty check` can run in CI without a sourced ROS workspace while still surfacing noise.
+# ROS/rclpy stubs are not always in the dev venv.
 [tool.ty.rules]
 unresolved-import = "ignore"
 unresolved-attribute = "warn"

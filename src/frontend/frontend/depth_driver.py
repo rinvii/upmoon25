@@ -14,11 +14,10 @@ except (ImportError, AttributeError):
 
 from std_msgs.msg import Header
 from sensor_msgs.msg import PointCloud2
-from nav_msgs.msg import Odometry
 
 
 from rclpy.node import Node, QoSProfile
-from std_msgs.msg import Int8, Header
+from std_msgs.msg import Int8
 
 DEPTH_SN = '018322071045'
 RGB_SN = '018322071465'

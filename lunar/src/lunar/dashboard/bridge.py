@@ -24,6 +24,7 @@ from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReli
 from sensor_msgs.msg import CompressedImage, Image, PointCloud2
 from std_msgs.msg import Float32, Int16, Int32, String
 
+from lunar.camera_pan_limits import clamp_pan_degrees
 from lunar.dashboard.state import store
 
 HOLD_TIMEOUT_SEC = 0.25
@@ -475,9 +476,14 @@ class DashboardBridge(Node):
         self._clear_hold("bucket_vel")
 
     def publish_pan(self, angle: int) -> None:
-        clamped = max(10, min(170, int(angle)))
+        clamped = clamp_pan_degrees(angle)
         self.pub_pan.publish(Int16(data=clamped))
         store.update(camera_pan=clamped, active_pan_cmd="")
+
+    def publish_pan_jog(self, cmd: int) -> None:
+        """Send velocity-style pan: +1 left, -1 right (matches arduino_driver /cmd/pan semantics)."""
+        cmd = max(-1, min(1, int(cmd)))
+        self.pub_pan.publish(Int16(data=cmd))
 
     def stop_pan(self) -> None:
         self.pub_pan.publish(Int16(data=0))
@@ -519,9 +525,9 @@ class DashboardBridge(Node):
                 self.stop_velocity()
         elif kind == "pan":
             if command == "left":
-                self.publish_pan(1)
+                self.publish_pan_jog(1)
             elif command == "right":
-                self.publish_pan(-1)
+                self.publish_pan_jog(-1)
             else:
                 self.stop_pan()
         elif kind == "bucket_vel":
