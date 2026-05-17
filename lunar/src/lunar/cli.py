@@ -1284,6 +1284,14 @@ def run(
             calibrated_rotary=calibrated_rotary,
             dig_timing_ms=dig_timing_ms,
         )
+        if not use_ms:
+            typer.secho(
+                f"Profile '{'dig-backup' if is_backup_dig else 'dig'}' now starts with a timed initial backward drive; "
+                "use --dig-timing-ms <positive_ms> instead of --calibrated-rotary.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=2)
         side = encoder_side.strip().lower()
         if not use_ms and side not in ("left", "right"):
             typer.secho("--encoder-side must be 'left' or 'right'.", fg=typer.colors.RED, err=True)
@@ -1297,6 +1305,7 @@ def run(
         ]
         if use_ms:
             dig_cmd_list.extend(["-p", f"timed_drive_ms:={fwd_val}"])
+            dig_cmd_list.extend(["-p", f"initial_backward_ms:={fwd_val}"])
         else:
             dig_cmd_list.extend(["-p", f"calibrated_rotary:={fwd_val}", "-p", f"encoder_side:={side}"])
         dig_cmd_list.extend(["-p", f"max_cycles_le:={int(dig_cycles)}"])

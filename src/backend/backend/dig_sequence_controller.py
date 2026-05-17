@@ -1,9 +1,9 @@
 """
 Autonomous dig sequence for lunar `run dig`.
 
-Runs once after IR/bucket calibration, then executes exactly three simple
-drive-forward → drive-back cycles by default. The bucket position bumps between
-cycles. Conveyor output is explicitly held off for this profile.
+Runs once after IR/bucket calibration, drives backward once for ``timed_drive_ms``,
+then executes simple drive-forward → drive-back cycles. The bucket position bumps
+between cycles. Conveyor output is explicitly held off for this profile.
 
 When ``use_local_terrain_grid`` is true (default), drive phases consult the same
 ``/autonomy/local_terrain_grid`` OccupancyGrid as short-segment nav (forward / rear
@@ -17,8 +17,9 @@ without IR, the same belt behavior applies.
 
 **Setup vs. drive:** In ``SETUP_IR`` the controller does not command wheel motion; it steps
 ``cmd/bucket_pos`` to ``bucket_start_pos`` / ``bucket_drive_start_pos`` (default 30), waits
-``bucket_start_settle_sec`` for that move to complete, then switches to ``DRIVE_FORWARD``. Later
-cycle bumps can increment the bucket farther, but never past ``DIG_BUCKET_POS_MAX`` (default 40).
+``bucket_start_settle_sec`` for that move to complete, then switches to ``INITIAL_BACKWARD``.
+Later cycle bumps can increment the bucket farther, but never past ``DIG_BUCKET_POS_MAX``
+(default 40).
 
 **Terrain gating:** When the local grid stops updating (age ``> grid_max_age_sec``), drive legs
 still use the **last** grid for corridor checks so encoder-mode digs do not freeze; a throttled
@@ -81,10 +82,11 @@ class DigState(Enum):
 
     WAIT_NAV_ARM = 0
     SETUP_IR = 1
-    DRIVE_FORWARD = 2
-    DRIVE_BACK = 3
-    CYCLE_END_CONVEYOR = 4
-    DONE = 5
+    INITIAL_BACKWARD = 2
+    DRIVE_FORWARD = 3
+    DRIVE_BACK = 4
+    CYCLE_END_CONVEYOR = 5
+    DONE = 6
 
 
 class DigSequenceController(Node):
@@ -94,6 +96,7 @@ class DigSequenceController(Node):
         self.declare_parameter("calibrated_rotary", 0)
         # When > 0, forward and backward drive legs each run for this duration (encoder unused).
         self.declare_parameter("timed_drive_ms", 0)
+        self.declare_parameter("initial_backward_ms", 0)
         self.declare_parameter("forward_drive_ms", 0)  # deprecated; same meaning as timed_drive_ms if timed_drive_ms unset
         self.declare_parameter("encoder_side", "left")
         self.declare_parameter("encoder_tolerance", 2)
@@ -126,8 +129,10 @@ class DigSequenceController(Node):
 
         self.calibrated_rotary = ros_param_non_negative_int(self.get_parameter("calibrated_rotary").value)
         td_raw = ros_param_non_negative_int(self.get_parameter("timed_drive_ms").value)
+        initial_back_raw = ros_param_non_negative_int(self.get_parameter("initial_backward_ms").value)
         legacy_fwd = ros_param_non_negative_int(self.get_parameter("forward_drive_ms").value)
         self.timed_drive_ms = merge_timed_drive_ms(td_raw, legacy_fwd)
+        self.initial_backward_ms = initial_back_raw or self.timed_drive_ms
         if legacy_fwd > 0 and td_raw > 0 and legacy_fwd != td_raw:
             self.get_logger().warn("Both timed_drive_ms and forward_drive_ms set; using timed_drive_ms.")
         self._timed_drive_only = self.timed_drive_ms > 0
@@ -350,7 +355,7 @@ class DigSequenceController(Node):
     def _status_drive_cmd(self) -> float:
         if self.state == DigState.DRIVE_FORWARD:
             return float(self.forward_linear)
-        if self.state == DigState.DRIVE_BACK:
+        if self.state in (DigState.INITIAL_BACKWARD, DigState.DRIVE_BACK):
             return float(self.backward_linear)
         return 0.0
 
@@ -405,6 +410,7 @@ class DigSequenceController(Node):
             "encoder_target": int(self.calibrated_rotary),
             "encoder_topic": self.encoder_topic,
             "timed_drive_ms": int(self.timed_drive_ms),
+            "initial_backward_ms": int(self.initial_backward_ms),
             "drive_uses_encoder": not self._timed_drive_only,
             "cycle_counter": int(self.cycle_counter),
             "max_cycles_le": int(self.max_cycles_le),
@@ -456,6 +462,7 @@ class DigSequenceController(Node):
         """Keep the bucket chain spinning during active dig phases."""
         chain_active = self.state in (
             DigState.SETUP_IR,
+            DigState.INITIAL_BACKWARD,
             DigState.DRIVE_FORWARD,
             DigState.DRIVE_BACK,
         ) or (self.keep_bucket_chain_until_done and self.state != DigState.DONE)
@@ -535,6 +542,8 @@ class DigSequenceController(Node):
 
             if self.state == DigState.SETUP_IR:
                 self._tick_setup_ir()
+            elif self.state == DigState.INITIAL_BACKWARD:
+                self._tick_initial_backward()
             elif self.state == DigState.DRIVE_FORWARD:
                 self._tick_drive_forward()
             elif self.state == DigState.DRIVE_BACK:
@@ -575,10 +584,11 @@ class DigSequenceController(Node):
             self._ir_bucket_gate_waiting = False
             self.keep_bucket_chain_until_done = True
             self.get_logger().warn(
-                f"Initial bucket settle complete at {self.bucket_pos_commanded}; starting forward/back cycles."
+                f"Initial bucket settle complete at {self.bucket_pos_commanded}; "
+                f"starting initial backward drive for {self.initial_backward_ms} ms."
             )
             self._stop_motion()
-            self.state = DigState.DRIVE_FORWARD
+            self.state = DigState.INITIAL_BACKWARD
             self._reset_phase_clock()
             return
 
@@ -607,10 +617,11 @@ class DigSequenceController(Node):
             self._ir_bucket_gate_waiting = False
             self.keep_bucket_chain_until_done = True
             self.get_logger().warn(
-                f"Bucket reached wheel-cycle start position {self.bucket_drive_start_pos}; starting forward/back cycles."
+                f"Bucket reached wheel-cycle start position {self.bucket_drive_start_pos}; "
+                f"starting initial backward drive for {self.initial_backward_ms} ms."
             )
             self._stop_motion()
-            self.state = DigState.DRIVE_FORWARD
+            self.state = DigState.INITIAL_BACKWARD
             self._reset_phase_clock()
             return
 
@@ -618,6 +629,26 @@ class DigSequenceController(Node):
             self._ir_bucket_gate_waiting = True
             self._ir_anchor_before_last_bucket_step = ir_before
             self._ir_bucket_gate_t0 = time.monotonic()
+
+    def _tick_initial_backward(self) -> None:
+        if self.initial_backward_ms <= 0:
+            self.get_logger().warn("initial_backward_ms is 0; skipping initial backward drive.")
+            self._stop_motion()
+            self.state = DigState.DRIVE_FORWARD
+            self._reset_phase_clock()
+            return
+        if timed_leg_complete(self._phase_elapsed(), self.initial_backward_ms):
+            self.get_logger().info(f"Initial backward drive finished after {self.initial_backward_ms} ms.")
+            self._stop_motion()
+            self.state = DigState.DRIVE_FORWARD
+            self._reset_phase_clock()
+            return
+        allow, detail = self._terrain_gate_reverse()
+        if not allow:
+            self._maybe_warn_terrain(f"Initial backward drive held: reverse blocked ({detail})")
+            self._stop_motion()
+            return
+        self._publish_vel(self.backward_linear)
 
     def _tick_drive_forward(self) -> None:
         if self._timed_drive_only:
