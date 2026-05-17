@@ -1040,8 +1040,8 @@ def run(
             "- nav-dig: Same as nav, plus dig_sequence in the background waiting on /autonomy/dig_arm "
             "(nav profile transitions into dig when the mission reaches dig handoff). "
             "Requires --calibrated-rotary or --dig-timing-ms.\n"
-            "- dig: Dig autonomy alone — foreground ``dig_sequence``. Default pre-launch cleanup stops "
-            "other stacks (use `--skip-cleanup` if robot is already running and you need `/sensor/ir`). "
+            "- dig: Dig autonomy alone — foreground ``dig_sequence``. This preserves an already-running "
+            "robot stack so `/sensor/ir`, encoders, and `cmd/velocity` subscribers stay alive. "
             "For nav→dig prefer nav-dig. Writes ``.lunar/runs/...`` logs and optional rosbag. "
             "Drive phases: --calibrated-rotary (encoder) or --dig-timing-ms (timed forward/back).\n\n"
             "- dig-backup: Same as dig, plus an extra end-of-cycle conveyor ON window "
@@ -1101,7 +1101,8 @@ def run(
         help=(
             "Leave existing lunar / ROS processes running before this profile starts. "
             "Use when the robot stack is already up (e.g. keep arduino_driver and /sensor/ir), "
-            "then add dig or nav. For `dig` without --session-bag, exiting dig does not run "
+            "then add nav or another stack. Dig and dig-backup preserve the robot stack automatically. "
+            "For `dig` without --session-bag, exiting dig does not run "
             "automatic teardown of tracked processes so the robot session stays alive."
         ),
     ),
@@ -1120,7 +1121,8 @@ def run(
     (``--session-bag``), and ``README.txt``. ``.lunar/runs/latest`` symlinks to the newest session.
 
     Pass ``--skip-cleanup`` to avoid killing processes already running (e.g. keep ``lunar run robot``
-    and ``/sensor/ir`` while starting ``dig`` or ``nav`` from another terminal).
+    and ``/sensor/ir`` while starting ``nav`` from another terminal). ``dig`` and ``dig-backup``
+    preserve the robot stack automatically because they require the frontend drivers.
     """
     root = find_repo_root()
     
@@ -1186,6 +1188,7 @@ def run(
 
     elif profile in (RunProfile.DIG, RunProfile.DIG_BACKUP):
         is_backup_dig = profile == RunProfile.DIG_BACKUP
+        effective_skip_cleanup = True
         use_ms, fwd_val = _resolve_dig_drive_params(
             profile_label="dig-backup" if is_backup_dig else "dig",
             calibrated_rotary=calibrated_rotary,
@@ -1224,9 +1227,10 @@ def run(
                 typer.echo(f"[session_rosbag] {bag_preview}")
             return
 
-        if skip_cleanup:
+        if effective_skip_cleanup:
             typer.secho(
-                "Skipping pre-launch cleanup (--skip-cleanup); existing ROS nodes are left running.",
+                f"Preserving existing ROS nodes for {profile.value}; robot/frontend stack must stay up for "
+                "IR, encoders, and drive subscribers.",
                 fg=typer.colors.YELLOW,
             )
         else:
@@ -1290,7 +1294,7 @@ def run(
             # With --skip-cleanup and no session bag, state.json may still track `lunar run robot`;
             # avoid kill_all() so the robot stack survives dig exit. Rosbag spawns replace state
             # with only the bag writer, so kill_all() still stops the bag when session_bag is on.
-            if (not skip_cleanup) or session_bag:
+            if (not effective_skip_cleanup) or session_bag:
                 kill_all()
 
         typer.echo(f"{profile.value} session finished. Logs under {session_dir}")
