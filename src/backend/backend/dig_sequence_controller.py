@@ -227,6 +227,7 @@ class DigSequenceController(Node):
         self.keep_bucket_chain_until_done = False
         # Legacy telemetry key remains false; this simplified profile has no dump/conveyor leg.
         self._post_dump_bump_pending = False
+        self._last_status_log = 0.0
 
         self.timer = self.create_timer(self.control_dt, self._tick)
         ginfo = f"local_terrain_grid={self._grid_topic}" if self._use_local_terrain_grid else "local_terrain_grid=off"
@@ -333,6 +334,39 @@ class DigSequenceController(Node):
         t = Twist()
         t.linear.x = float(linear_x)
         self.pub_vel.publish(t)
+
+    def _status_drive_cmd(self) -> float:
+        if self.state == DigState.DRIVE_FORWARD:
+            return float(self.forward_linear)
+        if self.state == DigState.DRIVE_BACK:
+            return float(self.backward_linear)
+        return 0.0
+
+    def _log_status_throttled(self) -> None:
+        now = time.monotonic()
+        if now - self._last_status_log < 1.0:
+            return
+        self._last_status_log = now
+        fwd_ok, fwd_r = self._terrain_gate_forward()
+        rev_ok, rev_r = self._terrain_gate_reverse()
+        gate = ""
+        if self._ir_bucket_gate_waiting:
+            gate = (
+                f" ir_gate=waiting(anchor={self._ir_anchor_before_last_bucket_step},"
+                f"elapsed={time.monotonic() - self._ir_bucket_gate_t0:.1f}s)"
+            )
+        self.get_logger().info(
+            "dig_status "
+            f"phase={self.state.name} "
+            f"drive_cmd={self._status_drive_cmd():.2f} "
+            f"ir={self.ir_value}/{self.ir_target} "
+            f"encoder={self.encoder_value}/{self.calibrated_rotary} "
+            f"bucket={self.bucket_pos_commanded}/{self.bucket_safety_stop} "
+            f"cycles={self.cycle_counter}/{self.max_cycles_le} "
+            f"timed_ms={self.timed_drive_ms} "
+            f"terrain_fwd={fwd_ok}:{fwd_r} terrain_rev={rev_ok}:{rev_r}"
+            f"{gate}"
+        )
 
     def _phase_elapsed(self) -> float:
         return (self.get_clock().now() - self.phase_clock).nanoseconds / 1e9
@@ -493,6 +527,7 @@ class DigSequenceController(Node):
 
             self._sync_conveyor_output()
             self._sync_bucket_chain_output()
+            self._log_status_throttled()
         finally:
             self._publish_dig_state()
 

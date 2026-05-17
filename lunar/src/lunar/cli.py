@@ -215,6 +215,82 @@ def _subscriber_count(topic: str) -> int:
     return 0
 
 
+def _topic_counts(topic: str) -> tuple[int, int]:
+    try:
+        result = subprocess.run(
+            ["ros2", "topic", "info", topic],
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return 0, 0
+
+    publishers = 0
+    subscribers = 0
+    for line in result.stdout.splitlines():
+        if "Publisher count:" in line:
+            try:
+                publishers = int(line.split(":", 1)[1].strip())
+            except ValueError:
+                publishers = 0
+        elif "Subscription count:" in line:
+            try:
+                subscribers = int(line.split(":", 1)[1].strip())
+            except ValueError:
+                subscribers = 0
+    return publishers, subscribers
+
+
+def _topic_sample(topic: str) -> str:
+    try:
+        result = subprocess.run(
+            ["timeout", "1.5", "ros2", "topic", "echo", "--once", topic],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return "unavailable"
+    text = " ".join(line.strip() for line in result.stdout.splitlines() if line.strip())
+    if not text:
+        err = " ".join(line.strip() for line in result.stderr.splitlines() if line.strip())
+        return err or "no sample within 1.5s"
+    return text[:180]
+
+
+def _print_dig_preflight(*, encoder_topic: str, timed_drive_only: bool, dig_shell_cmd: str) -> None:
+    typer.secho("=== dig preflight ===", fg=typer.colors.CYAN, bold=True)
+    typer.echo(f"command: {dig_shell_cmd}")
+    topics = [
+        ("wheel command", "/cmd/velocity", False),
+        ("IR general", "/sensor/ir", True),
+        ("IR left", "/sensor/ir/left", True),
+        ("IR right", "/sensor/ir/right", True),
+        ("bucket position command", "/cmd/bucket_pos", False),
+        ("bucket chain command", "/cmd/bucket_vel", False),
+        ("conveyor command", "/cmd/conveyor", False),
+    ]
+    if not timed_drive_only:
+        topics.append(("drive encoder", encoder_topic, True))
+
+    for label, topic, sample in topics:
+        pubs, subs = _topic_counts(topic)
+        typer.echo(f"{label:24} {topic:28} publishers={pubs} subscribers={subs}")
+        if sample:
+            typer.echo(f"{'':24} sample: {_topic_sample(topic)}")
+
+    if _topic_counts("/cmd/velocity")[1] <= 0:
+        typer.secho("WARNING: /cmd/velocity has no subscribers; wheels cannot move.", fg=typer.colors.RED, bold=True)
+    if _topic_counts("/sensor/ir")[0] <= 0:
+        typer.secho("WARNING: /sensor/ir has no publishers; dig setup may never finish.", fg=typer.colors.RED, bold=True)
+    if not timed_drive_only and _topic_counts(encoder_topic)[0] <= 0:
+        typer.secho(f"WARNING: {encoder_topic} has no publishers; encoder drive legs cannot complete.", fg=typer.colors.RED, bold=True)
+    typer.secho("=== end dig preflight ===", fg=typer.colors.CYAN, bold=True)
+
+
 def _on_jetson() -> bool:
     return Path("/etc/nv_tegra_release").exists()
 
@@ -1241,6 +1317,12 @@ def run(
             time.sleep(0.5)
 
         ensure_env()
+
+        _print_dig_preflight(
+            encoder_topic=f"/sensor/encoder/{side}",
+            timed_drive_only=use_ms,
+            dig_shell_cmd=dig_shell_cmd,
+        )
 
         typer.secho(
             f"Starting {profile.value} sequence in the foreground... "
