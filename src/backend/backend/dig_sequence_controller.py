@@ -102,7 +102,7 @@ class DigSequenceController(Node):
         self.declare_parameter("ir_target", 17)
         self.declare_parameter("bucket_start_pos", DIG_BUCKET_DRIVE_START_POS)
         self.declare_parameter("bucket_drive_start_pos", DIG_BUCKET_DRIVE_START_POS)
-        self.declare_parameter("bucket_start_settle_sec", 2.0)
+        self.declare_parameter("bucket_start_settle_sec", 7.0)
         self.declare_parameter("bucket_safety_stop", DIG_BUCKET_POS_MAX)
         self.declare_parameter("bucket_chain_speed", 40)
         self.declare_parameter("max_cycles_le", DEFAULT_DIG_CYCLES)

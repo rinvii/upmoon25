@@ -1167,7 +1167,7 @@ def run(
         help="dig / nav-dig: Number of forward/back dig cycles to run.",
     ),
     bucket_settle_sec: float = typer.Option(
-        2.0,
+        7.0,
         "--bucket-settle-sec",
         min=0.0,
         help="dig / nav-dig: Seconds to wait after commanding the initial bucket position before wheel motion.",
