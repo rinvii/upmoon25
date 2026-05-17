@@ -18,7 +18,7 @@ without IR, the same belt behavior applies.
 **Setup vs. drive:** In ``SETUP_IR`` the controller does not command wheel motion; it steps
 ``cmd/bucket_pos`` to ``bucket_start_pos`` / ``bucket_drive_start_pos`` (default 30), waits
 ``bucket_start_settle_sec`` for that move to complete, then switches to ``DRIVE_FORWARD``. Later
-cycle bumps can increment the bucket farther, but never past ``DIG_BUCKET_POS_MAX`` (default 50).
+cycle bumps can increment the bucket farther, but never past ``DIG_BUCKET_POS_MAX`` (default 40).
 
 **Terrain gating:** When the local grid stops updating (age ``> grid_max_age_sec``), drive legs
 still use the **last** grid for corridor checks so encoder-mode digs do not freeze; a throttled
@@ -72,7 +72,7 @@ from backend.dig_sequence_params import (
 from backend.navigation_controller_pure import plan_corridor_step
 
 DEFAULT_DIG_CYCLES = 8
-DIG_BUCKET_POS_MAX = 50
+DIG_BUCKET_POS_MAX = 40
 DIG_BUCKET_DRIVE_START_POS = 30
 
 

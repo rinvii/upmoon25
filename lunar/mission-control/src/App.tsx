@@ -767,7 +767,7 @@ function TeleopTelemetry({ snapshot }: { snapshot: MissionControlSnapshot }) {
       <div className="rounded-md border border-slate-800 bg-slate-950/70 p-2">
         <div className="text-[10px] font-semibold uppercase text-slate-500">Mining</div>
         <div className="mt-1 font-mono text-slate-200">
-          bucket={fmtNum(bucketPos)}/{fmtNum(a?.bucketPosMax ?? 50)}% chain={fmtNum(a?.bucketVel)} conv={a?.conveyor ? 'ON' : 'OFF'}
+          bucket={fmtNum(bucketPos)}/{fmtNum(a?.bucketPosMax ?? 40)}% chain={fmtNum(a?.bucketVel)} conv={a?.conveyor ? 'ON' : 'OFF'}
         </div>
         <div className="mt-1 text-slate-500">bucket pos / chain / conveyor</div>
       </div>

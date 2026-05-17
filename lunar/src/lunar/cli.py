@@ -1622,7 +1622,7 @@ def act(
     Examples:
     - lunar act drive --value 50 --duration 1
     - lunar act bucket-vel --value 30
-    - lunar act bucket-pos --value 50
+    - lunar act bucket-pos --value 40
     - lunar act conveyor --value 1
     - lunar act camera-height --value 50
     - lunar act pan --value 120
