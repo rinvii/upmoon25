@@ -39,6 +39,7 @@ _sensor_clients = set()
 _io_loop = None
 _last_push_ts = {"rgb": 0.0, "rear": 0.0}
 _latest_frames = {"rgb": b"", "rear": b""}
+_camera_broadcast_pending = {"rgb": False, "rear": False}
 _last_sensor_push_ts = 0.0
 _sensor_state = {
     "time": [],
@@ -112,7 +113,7 @@ class CameraWebSocketHandler(tornado.websocket.WebSocketHandler):
     def open(self, camera_name):
         self.camera_name = camera_name or "rgb"
         self._camera_write_pending = False
-        self._camera_queued_payloads = deque(maxlen=_camera_write_queue_frames)
+        self._camera_latest_queued_payload = None
         if self.camera_name not in _clients:
             self.close(code=1008, reason="unknown camera")
             return
@@ -134,7 +135,8 @@ class CameraWebSocketHandler(tornado.websocket.WebSocketHandler):
         if not payload or self.ws_connection is None:
             return
         if self._camera_write_pending:
-            self._camera_queued_payloads.append(payload)
+            # Latest-frame wins: overwrite queued payload so stale frames are dropped.
+            self._camera_latest_queued_payload = payload
             return
         self._camera_write_pending = True
         try:
@@ -151,7 +153,8 @@ class CameraWebSocketHandler(tornado.websocket.WebSocketHandler):
         except Exception:
             self.close()
             return
-        payload = self._camera_queued_payloads.popleft() if self._camera_queued_payloads else None
+        payload = self._camera_latest_queued_payload
+        self._camera_latest_queued_payload = None
         if payload and self.ws_connection is not None:
             self.send_camera_payload(payload)
 
@@ -197,13 +200,29 @@ def _broadcast(camera_name: str, payload: bytes):
 def _schedule_broadcast(camera_name: str, payload: bytes):
     if not payload or _io_loop is None:
         return
-    _latest_frames[camera_name] = payload
+    with _clients_lock:
+        _latest_frames[camera_name] = payload
 
     now = time.monotonic()
     if _camera_push_interval_sec > 0.0 and (now - _last_push_ts[camera_name] < _camera_push_interval_sec):
         return
     _last_push_ts[camera_name] = now
-    _io_loop.add_callback(_broadcast, camera_name, payload)
+    with _clients_lock:
+        if _camera_broadcast_pending.get(camera_name, False):
+            return
+        _camera_broadcast_pending[camera_name] = True
+    _io_loop.add_callback(_drain_camera_broadcast, camera_name)
+
+
+def _drain_camera_broadcast(camera_name: str):
+    try:
+        with _clients_lock:
+            payload = _latest_frames.get(camera_name, b"")
+        if payload:
+            _broadcast(camera_name, payload)
+    finally:
+        with _clients_lock:
+            _camera_broadcast_pending[camera_name] = False
 
 
 def _broadcast_sensors(payload: str):

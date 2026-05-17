@@ -22,6 +22,8 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
     let socket: WebSocket | undefined
     let currentUrl: string | null = null
+    let pendingUrl: string | null = null
+    let frameFlushRaf: number | null = null
     let live = false
     let hasAnyFrame = false
 
@@ -36,6 +38,14 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
       if (imageRef.current) {
         imageRef.current.removeAttribute('src')
       }
+      if (frameFlushRaf !== null) {
+        window.cancelAnimationFrame(frameFlushRaf)
+        frameFlushRaf = null
+      }
+      if (pendingUrl) {
+        URL.revokeObjectURL(pendingUrl)
+        pendingUrl = null
+      }
       revokeCurrent()
       live = false
       hasAnyFrame = false
@@ -48,17 +58,27 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
         URL.revokeObjectURL(nextUrl)
         return
       }
-      if (imageRef.current) imageRef.current.src = nextUrl
-      if (!live) {
-        live = true
-        setSocketState('live')
-      }
-      if (!hasAnyFrame) {
-        hasAnyFrame = true
-        setHasFrame(true)
-      }
-      revokeCurrent()
-      currentUrl = nextUrl
+      // Latest-frame wins: keep only the newest pending frame.
+      if (pendingUrl) URL.revokeObjectURL(pendingUrl)
+      pendingUrl = nextUrl
+      if (frameFlushRaf !== null) return
+      frameFlushRaf = window.requestAnimationFrame(() => {
+        frameFlushRaf = null
+        if (closed || !pendingUrl) return
+        const frameUrl = pendingUrl
+        pendingUrl = null
+        if (imageRef.current) imageRef.current.src = frameUrl
+        if (!live) {
+          live = true
+          setSocketState('live')
+        }
+        if (!hasAnyFrame) {
+          hasAnyFrame = true
+          setHasFrame(true)
+        }
+        revokeCurrent()
+        currentUrl = frameUrl
+      })
     }
 
     function connect() {
