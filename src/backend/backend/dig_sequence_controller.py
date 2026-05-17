@@ -16,10 +16,9 @@ cycles until the sequence finishes or aborts. If setup exits on the bucket posit
 without IR, the same belt behavior applies.
 
 **Setup vs. drive:** In ``SETUP_IR`` the controller does not command wheel motion; it steps
-``cmd/bucket_pos`` to ``bucket_start_pos`` / ``bucket_drive_start_pos`` (default 30), then switches
-to ``DRIVE_FORWARD``. IR can still end setup early, but it is no longer allowed to block the
-initial wheel-cycle start condition. Later cycle bumps can increment the bucket farther, but never
-past ``DIG_BUCKET_POS_MAX`` (default 50).
+``cmd/bucket_pos`` to ``bucket_start_pos`` / ``bucket_drive_start_pos`` (default 30), waits
+``bucket_start_settle_sec`` for that move to complete, then switches to ``DRIVE_FORWARD``. Later
+cycle bumps can increment the bucket farther, but never past ``DIG_BUCKET_POS_MAX`` (default 50).
 
 **Terrain gating:** When the local grid stops updating (age ``> grid_max_age_sec``), drive legs
 still use the **last** grid for corridor checks so encoder-mode digs do not freeze; a throttled
@@ -66,8 +65,6 @@ from backend.dig_sequence_params import (
     encoder_forward_target_reached,
     encoder_returned_home,
     ir_bucket_step_gate_released,
-    ir_setup_stop_eq,
-    ir_setup_stop_le,
     merge_timed_drive_ms,
     ros_param_non_negative_int,
     timed_leg_complete,
@@ -105,6 +102,7 @@ class DigSequenceController(Node):
         self.declare_parameter("ir_target", 17)
         self.declare_parameter("bucket_start_pos", DIG_BUCKET_DRIVE_START_POS)
         self.declare_parameter("bucket_drive_start_pos", DIG_BUCKET_DRIVE_START_POS)
+        self.declare_parameter("bucket_start_settle_sec", 2.0)
         self.declare_parameter("bucket_safety_stop", DIG_BUCKET_POS_MAX)
         self.declare_parameter("bucket_chain_speed", 40)
         self.declare_parameter("max_cycles_le", DEFAULT_DIG_CYCLES)
@@ -165,6 +163,7 @@ class DigSequenceController(Node):
                 f"Clamped bucket_drive_start_pos:={raw_bucket_drive_start_pos} to {self.bucket_drive_start_pos}; "
                 f"valid range is {self.bucket_start_pos}..{self.bucket_safety_stop}."
             )
+        self.bucket_start_settle_sec = max(0.0, float(self.get_parameter("bucket_start_settle_sec").value))
         self.bucket_chain_speed = int(self.get_parameter("bucket_chain_speed").value)
         raw_max_cycles = int(self.get_parameter("max_cycles_le").value)
         self.max_cycles_le = max(1, min(100, raw_max_cycles))
@@ -256,6 +255,7 @@ class DigSequenceController(Node):
         self.get_logger().info(
             f"dig_sequence start (state={self.state.name}): IRMode={self.ir_setup_mode}, IR→{self.ir_target}, "
             f"bucket setup {self.bucket_start_pos}→{self.bucket_drive_start_pos}, hard_max={self.bucket_safety_stop}, "
+            f"bucket_start_settle_sec={self.bucket_start_settle_sec}, "
             f"{fwd_desc}, cycles={self.max_cycles_le}, conveyor=disabled, {ginfo}, {gate_msg}"
         )
 
@@ -375,6 +375,7 @@ class DigSequenceController(Node):
             f"encoder={self.encoder_value}/{self.calibrated_rotary} "
             f"bucket={self.bucket_pos_commanded}/start_cycles_at={self.bucket_drive_start_pos}/max={self.bucket_safety_stop} "
             f"cycles={self.cycle_counter}/{self.max_cycles_le} "
+            f"phase_elapsed={self._phase_elapsed():.2f}s "
             f"timed_ms={self.timed_drive_ms} "
             f"terrain_fwd={fwd_ok}:{fwd_r} terrain_rev={rev_ok}:{rev_r}"
             f"{gate}"
@@ -410,6 +411,7 @@ class DigSequenceController(Node):
             "bucket_pos_commanded": int(self.bucket_pos_commanded),
             "bucket_drive_start_pos": int(self.bucket_drive_start_pos),
             "bucket_pos_max": int(self.bucket_safety_stop),
+            "bucket_start_settle_sec": float(self.bucket_start_settle_sec),
             "keep_bucket_chain_until_done": bool(self.keep_bucket_chain_until_done),
             "bucket_chain_speed": int(self.bucket_chain_speed),
             "phase_elapsed_sec": float(self._phase_elapsed()),
@@ -548,59 +550,31 @@ class DigSequenceController(Node):
     def _tick_setup_ir(self) -> None:
         if not self.setup_complete:
             self._reset_phase_clock()
-            self.bucket_pos_commanded = min(DIG_BUCKET_POS_MAX, self.bucket_start_pos)
+            self.bucket_pos_commanded = min(
+                DIG_BUCKET_POS_MAX,
+                max(self.bucket_start_pos, self.bucket_drive_start_pos),
+            )
             self.pub_bucket_pos.publish(Int16(data=int(self.bucket_pos_commanded)))
             self.pub_bucket_vel.publish(Int16(data=int(self.bucket_chain_speed)))
             self.setup_complete = True
             self._ir_setup_was_above_target = False
             self._ir_bucket_gate_waiting = False
             self.ir_last_step_time = self.get_clock().now()
-
-        if self.ir_setup_mode == "eq":
-            ir_met = ir_setup_stop_eq(self.ir_value, self.ir_target)
-        else:
-            ir_met, self._ir_setup_was_above_target = ir_setup_stop_le(
-                self.ir_value,
-                self.ir_target,
-                self.bucket_pos_commanded,
-                self.bucket_start_pos,
-                self._ir_setup_was_above_target,
+            self.get_logger().warn(
+                f"Commanded initial bucket position {self.bucket_pos_commanded}; "
+                f"waiting {self.bucket_start_settle_sec:.2f}s before wheel motion."
             )
+            return
 
-        if ir_met:
-            self._ir_bucket_gate_waiting = False
-            self.keep_bucket_chain_until_done = True
-            if self.ir_setup_mode == "eq":
-                self.get_logger().info(
-                    "IR exact match at target; setup complete "
-                    f"(belt stays at bucket_chain_speed={self.bucket_chain_speed})."
-                )
-            else:
-                self.get_logger().info(
-                    f"IR reached at-or-below target (ir_value={self.ir_value}, "
-                    f"ir_target={self.ir_target}); setup complete "
-                    f"(belt stays at bucket_chain_speed={self.bucket_chain_speed})."
-                )
+        if self._phase_elapsed() < self.bucket_start_settle_sec:
             self._stop_motion()
-            self.state = DigState.DRIVE_FORWARD
-            self._reset_phase_clock()
             return
 
         if self.bucket_pos_commanded >= self.bucket_drive_start_pos:
             self._ir_bucket_gate_waiting = False
             self.keep_bucket_chain_until_done = True
-            if self.ir_setup_mode == "eq":
-                warn_tail = (
-                    f"(IR never matched exact ir_target={self.ir_target}; latest ir_value={self.ir_value})"
-                )
-            else:
-                warn_tail = (
-                    f"(expected IR to descend to <= {self.ir_target} after reading above target; "
-                    f"latest ir_value={self.ir_value})"
-                )
             self.get_logger().warn(
-                f"Bucket reached wheel-cycle start position {self.bucket_drive_start_pos} {warn_tail}; "
-                "starting forward/back cycles."
+                f"Initial bucket settle complete at {self.bucket_pos_commanded}; starting forward/back cycles."
             )
             self._stop_motion()
             self.state = DigState.DRIVE_FORWARD

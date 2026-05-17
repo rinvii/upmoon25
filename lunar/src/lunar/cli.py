@@ -1166,6 +1166,17 @@ def run(
         max=100,
         help="dig / nav-dig: Number of forward/back dig cycles to run.",
     ),
+    bucket_settle_sec: float = typer.Option(
+        2.0,
+        "--bucket-settle-sec",
+        min=0.0,
+        help="dig / nav-dig: Seconds to wait after commanding the initial bucket position before wheel motion.",
+    ),
+    dig_preflight: bool = typer.Option(
+        False,
+        "--dig-preflight/--no-dig-preflight",
+        help="dig / dig-backup: Print slow ROS topic diagnostics before starting.",
+    ),
     grid_preset: str = typer.Option(
         "standard",
         "--grid-preset",
@@ -1249,7 +1260,10 @@ def run(
             dig_cmd_suffix = (
                 f"-p calibrated_rotary:={fwd_val} -p encoder_side:={shlex.quote(side)}"
             )
-        dig_cmd_suffix = f"{dig_cmd_suffix} -p max_cycles_le:={int(dig_cycles)}"
+        dig_cmd_suffix = (
+            f"{dig_cmd_suffix} -p max_cycles_le:={int(dig_cycles)} "
+            f"-p bucket_start_settle_sec:={float(bucket_settle_sec)}"
+        )
         cmds.append(
             (
                 "dig_sequence",
@@ -1286,6 +1300,7 @@ def run(
         else:
             dig_cmd_list.extend(["-p", f"calibrated_rotary:={fwd_val}", "-p", f"encoder_side:={side}"])
         dig_cmd_list.extend(["-p", f"max_cycles_le:={int(dig_cycles)}"])
+        dig_cmd_list.extend(["-p", f"bucket_start_settle_sec:={float(bucket_settle_sec)}"])
         if is_backup_dig:
             dig_cmd_list.extend(["-p", "end_cycle_conveyor_seconds:=5.0"])
         dig_shell_cmd = " ".join(shlex.quote(x) for x in dig_cmd_list)
@@ -1318,11 +1333,14 @@ def run(
 
         ensure_env()
 
-        _print_dig_preflight(
-            encoder_topic=f"/sensor/encoder/{side}",
-            timed_drive_only=use_ms,
-            dig_shell_cmd=dig_shell_cmd,
-        )
+        if dig_preflight:
+            _print_dig_preflight(
+                encoder_topic=f"/sensor/encoder/{side}",
+                timed_drive_only=use_ms,
+                dig_shell_cmd=dig_shell_cmd,
+            )
+        else:
+            typer.echo(f"dig command: {dig_shell_cmd}")
 
         typer.secho(
             f"Starting {profile.value} sequence in the foreground... "
