@@ -49,9 +49,12 @@ class RGBDriver(Node):
         # TODO change default values
         self.declare_parameter('publish_raw', False)
         self.declare_parameter('publish_compressed', True)
+        self.declare_parameter('jpeg_quality', 70)
 
         self.publish_compressed = self.get_parameter('publish_compressed').value
         self.publish_raw = self.get_parameter('publish_raw').value
+        self.jpeg_quality = int(self.get_parameter('jpeg_quality').value)
+        self.jpeg_quality = max(30, min(95, self.jpeg_quality))
 
         self.PUB_rgbinfo = self.create_publisher(sensor_msgs.CameraInfo, '/camera/rgb/camera_info', self.QOS)
         self.PUB_rgb = self.create_publisher(sensor_msgs.Image, '/camera/rgb/image_raw', self.QOS)
@@ -126,7 +129,11 @@ class RGBDriver(Node):
     def publishImageCompressed(self, frame, time):
         data = np.asanyarray(frame.get_data())
 
-        success, jpeg_data = cv2.imencode('.jpg', data)
+        success, jpeg_data = cv2.imencode(
+            '.jpg',
+            data,
+            [int(cv2.IMWRITE_JPEG_QUALITY), int(self.jpeg_quality)],
+        )
         if not success:
             return
         

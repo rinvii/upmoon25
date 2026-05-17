@@ -13,13 +13,9 @@ except (ImportError, AttributeError):
     from pyrealsense2 import pyrealsense2 as rs
 
 from std_msgs.msg import Header
-from sensor_msgs.msg import PointCloud2
 
 
 from rclpy.node import Node, QoSProfile
-from std_msgs.msg import Int8
-from frontend.depth_control import pointcloud_command_topics, pointcloud_stream_enabled, unique_topics
-from frontend.depth_points import sanitize_point_vertices
 
 DEPTH_SN = '018322071045'
 RGB_SN = '018322071465'
@@ -29,18 +25,13 @@ REAR_WIDTH = 640
 REAR_HEIGHT = 480
 
 '''
-    This node handles the second D435 on the robot. It keeps the point-cloud path
+    This node handles the second D435 on the robot. It keeps the rear RGB path
     alive while also publishing a rear RGB operator feed from the same device.
 
     Parameters:
-    demand_publish: bool, if True, the node will only publish when it receives a command on /cmd/pointcloud
-
-    Subscriptions:
-    /cmd/pointcloud - Int8, if 1, the node will publish the point cloud data, if 0, it will not publish. Will
-                            only be used if demand_publish is True. 
+    demand_publish: bool, kept for compatibility but ignored (pointcloud path disabled)
 
     Publishes:
-    /camera/depth/points - PointCloud2, the point cloud data from the second D435
     /camera/rear/image_raw - Image, the rear RGB image
     /camera/rear/image_compressed - CompressedImage, the rear RGB image
 '''
@@ -50,12 +41,18 @@ class DepthDriver(Node):
         super().__init__('depth_driver')
 
         self.declare_parameter('demand_publish', False)
-        self.declare_parameter('publish_hz', 15.0)
-        self.declare_parameter('max_points', 50000)
-        self.demand_publish = self.get_parameter('demand_publish').value
-        self.publish_hz = float(self.get_parameter('publish_hz').value)
-        self.max_points = int(self.get_parameter('max_points').value)
-        self.publish_enabled = not self.demand_publish
+        self.declare_parameter('publish_hz', 15.0)  # legacy pointcloud rate
+        self.declare_parameter('rear_publish_hz', 30.0)
+        self.declare_parameter('publish_rear_raw', False)
+        self.declare_parameter('publish_rear_compressed', True)
+        self.declare_parameter('rear_jpeg_quality', 70)
+        self.demand_publish = self.get_parameter('demand_publish').value  # ignored
+        self.publish_hz = float(self.get_parameter('publish_hz').value)  # legacy compatibility
+        self.rear_publish_hz = float(self.get_parameter('rear_publish_hz').value)
+        self.publish_rear_raw = bool(self.get_parameter('publish_rear_raw').value)
+        self.publish_rear_compressed = bool(self.get_parameter('publish_rear_compressed').value)
+        self.rear_jpeg_quality = int(self.get_parameter('rear_jpeg_quality').value)
+        self.rear_jpeg_quality = max(30, min(95, self.rear_jpeg_quality))
 
         # This is special for Gazebo - subscriber QOS must match publisher QOS
         self.QOS = QoSProfile(
@@ -65,32 +62,16 @@ class DepthDriver(Node):
             durability=2   # Volatile
         )
 
-        self.PUB_pc = self.create_publisher(PointCloud2, '/camera/depth/points', self.QOS)
         self.PUB_rear = self.create_publisher(sensor_msgs.Image, '/camera/rear/image_raw', self.QOS)
         self.PUB_rear_comp = self.create_publisher(sensor_msgs.CompressedImage, '/camera/rear/image_compressed', self.QOS)
         self.PUB_rear_info = self.create_publisher(sensor_msgs.CameraInfo, '/camera/rear/camera_info', self.QOS)
-
-        # Filters for pointcloud data
-        self.dec_filter = rs.decimation_filter()
-        self.dec_filter.set_option(rs.option.filter_magnitude, 3)
-
-        self.spat_filter = rs.spatial_filter()
-
-        self.temp_filter = rs.temporal_filter()
-
-        self.pc = rs.pointcloud()
         self.cam_info_msg = None
 
         self.pipe = None
 
-        if self.demand_publish:
-            for topic in unique_topics(pointcloud_command_topics()):
-                self.create_subscription(Int8, topic, self.onCmd, 1)
-            self.get_logger().info(
-                "Depth driver in on-demand mode; send /cmd/pointcloud (or cmd/pointcloud) 1 to stream, 0 to stop."
-            )
+        self.get_logger().info("Pointcloud is disabled; publishing rear RGB stream only.")
 
-        tick_hz = max(1.0, self.publish_hz)
+        tick_hz = max(1.0, self.rear_publish_hz)
         self.create_timer(1.0 / tick_hz, self._capture_tick)
 
     def _ensure_pipeline(self):
@@ -105,7 +86,6 @@ class DepthDriver(Node):
 
         cfg = rs.config()
         cfg.enable_device(depth_serial)
-        cfg.enable_stream(rs.stream.depth, DEPTH_WIDTH, DEPTH_HEIGHT, rs.format.z16, 30)
         cfg.enable_stream(rs.stream.color, REAR_WIDTH, REAR_HEIGHT, rs.format.bgr8, 30)
 
         self.pipe.start(cfg)
@@ -152,19 +132,7 @@ class DepthDriver(Node):
             pass
         self.pipe = None
 
-    def onTimer(self):
-        self._capture_tick()
-
-    def onCmd(self, msg):
-        enabled = pointcloud_stream_enabled(msg.data)
-        if enabled != self.publish_enabled:
-            self.publish_enabled = enabled
-            mode = "enabled" if enabled else "paused"
-            self.get_logger().info(f"Depth stream {mode} via /cmd/pointcloud command.")
-
     def _capture_tick(self):
-        if not self.publish_enabled:
-            return
         try:
             self._ensure_pipeline()
             self.getFrame()
@@ -175,71 +143,24 @@ class DepthDriver(Node):
 
     def getFrame(self):
             frame = self.pipe.wait_for_frames()
-
-            depth = frame.get_depth_frame()
             color = frame.get_color_frame()
 
             time = self.get_clock().now().to_msg()
 
             if color:
-                self.publishRearImageCompressed(color, time)
-                self.publishRearImageRaw(color, time)
+                if self.publish_rear_compressed:
+                    self.publishRearImageCompressed(color, time)
+                if self.publish_rear_raw:
+                    self.publishRearImageRaw(color, time)
                 self.publishRearCamInfo(None, time, None)
-            if not depth:
-                return
-
-            # Apply post-processing filters
-            filtered = depth
-            filtered = self.dec_filter.process(filtered)
-            filtered = self.spat_filter.process(filtered)
-            filtered = self.temp_filter.process(filtered)
-
-            points = self.pc.calculate(filtered)
-            vertices = np.array(points.get_vertices())
-            
-            x = vertices['f0']
-            y = vertices['f1']
-            z = vertices['f2']
-
-            vertices = np.vstack((x, y, z)).T
-            
-            vertices = sanitize_point_vertices(vertices, max_points=self.max_points)
-            self.publishPC(vertices, time)
-
-    def publishPC(self, vertices, time):
-        # Credit: https://github.com/SebastianGrans/ROS2-Point-Cloud-Demo/blob/master/pcd_demo/pcd_publisher/pcd_publisher_node.py
-        if vertices.size == 0:
-            return
-
-        ros_dtype = sensor_msgs.PointField.FLOAT32
-        dtype = np.float32
-        itemsize = np.dtype(dtype).itemsize
-
-        data = vertices.astype(dtype).tobytes()
-
-        fields = [sensor_msgs.PointField(
-            name=n, offset=i*itemsize, datatype=ros_dtype, count=1)
-            for i, n in enumerate('xyz')]
-        
-        header = Header(frame_id='depth_link_optical', stamp=time)
-
-        msg = sensor_msgs.PointCloud2(
-            header=header,
-            height=1, 
-            width=vertices.shape[0],
-            is_dense=False,
-            is_bigendian=False,
-            fields=fields,
-            point_step=(itemsize * 3), # Every point consists of three float32s.
-            row_step=(itemsize * 3 * vertices.shape[0]),
-            data=data
-        )
-
-        self.PUB_pc.publish(msg)
 
     def publishRearImageCompressed(self, frame, time):
         data = np.asanyarray(frame.get_data())
-        success, jpeg_data = cv2.imencode('.jpg', data)
+        success, jpeg_data = cv2.imencode(
+            '.jpg',
+            data,
+            [int(cv2.IMWRITE_JPEG_QUALITY), int(self.rear_jpeg_quality)],
+        )
         if not success:
             return
 
