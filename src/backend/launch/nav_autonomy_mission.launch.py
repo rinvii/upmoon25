@@ -27,6 +27,7 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
         parameters=[
             {
+                "claim_cmd_vel": True,
                 "use_zone_goal": True,
                 "zone_goal_id": "dig",
                 "goal_preference": "zone",
