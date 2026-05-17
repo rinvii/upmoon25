@@ -454,11 +454,12 @@ class DigSequenceController(Node):
 
     def _sync_bucket_chain_output(self) -> None:
         """Keep the bucket chain spinning during active dig phases."""
-        if self.state in (
+        chain_active = self.state in (
             DigState.SETUP_IR,
             DigState.DRIVE_FORWARD,
             DigState.DRIVE_BACK,
-        ):
+        ) or (self.keep_bucket_chain_until_done and self.state != DigState.DONE)
+        if chain_active:
             self.pub_bucket_vel.publish(Int16(data=int(self.bucket_chain_speed)))
         else:
             self.pub_bucket_vel.publish(Int16(data=0))
