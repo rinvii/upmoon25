@@ -2,8 +2,10 @@
 Short-segment navigation from the local terrain OccupancyGrid.
 
 Publishes proposed ``geometry_msgs/Twist`` on ``/autonomy/navigation_twist`` for a mux
-or operator tooling. Optional direct ``cmd/velocity`` when ``claim_cmd_vel`` is true
-(lab only; ensure no competing publishers).
+or operator tooling. Optional direct ``cmd/velocity`` when ``claim_cmd_vel`` is true (used by ``lunar run nav`` /
+``nav-dig`` so Sabertooth ``drive_motors`` receives twists). Values on ``cmd/velocity`` are scaled to the
+same ±100 **percent** convention as ``dig_sequence`` / joystick (see ``cmd_vel_*_full_percent`` params).
+While navigation is disarmed or in mission handoff, this node skips ``cmd/velocity`` so ``dig_sequence`` can own the topic.
 """
 
 from __future__ import annotations
@@ -51,6 +53,10 @@ class NavigationController(Node):
         self.declare_parameter("goal_preference", "auto")
         self.declare_parameter("goal_slow_radius_m", 0.35)
         self.declare_parameter("nav_mission_state_timeout_sec", 0.9)
+        # When claim_cmd_vel is true, drive_motors expects linear.x / angular.z as Sabertooth
+        # percent (-100..100); planner uses normalized * v_max / w_max (~m/s style magnitudes).
+        self.declare_parameter("cmd_vel_linear_full_percent", 35.0)
+        self.declare_parameter("cmd_vel_angular_full_percent", 50.0)
 
         self._grid: Optional[np.ndarray] = None
         self._grid_mono: Optional[float] = None
@@ -79,7 +85,10 @@ class NavigationController(Node):
         self._pub_cmd: Optional[Any] = None
         if bool(self.get_parameter("claim_cmd_vel").value):
             self._pub_cmd = self.create_publisher(Twist, "cmd/velocity", 10)
-            self.get_logger().warn("claim_cmd_vel is true: publishing cmd/velocity from navigation_controller")
+            self.get_logger().info(
+                "claim_cmd_vel is true: publishing cmd/velocity (Sabertooth % scale) when armed; "
+                "releasing topic during handoff / navigation_active false (dig may take over)."
+            )
 
         self.create_timer(0.1, self._tick)
         self.get_logger().info("navigation_controller: publishes /autonomy/navigation_twist (gated)")
@@ -369,7 +378,24 @@ class NavigationController(Node):
         self.pub_status.publish(s)
         self.pub_twist.publish(twist)
         if self._pub_cmd is not None:
-            self._pub_cmd.publish(twist)
+            # Avoid flooding cmd/velocity with zeros while disarmed or at dig handoff — dig_sequence
+            # publishes the same topic during autonomous dig.
+            if gated_reason in ("navigation_active_false", "nav_mission_handoff"):
+                return
+            self._pub_cmd.publish(self._twist_to_drive_motors(twist))
+
+    def _twist_to_drive_motors(self, twist: Twist) -> Twist:
+        """Map planner twist (linear ~v_max, angular ~w_max) to drive_motors percent input."""
+        v_max = float(self.get_parameter("v_max").value)
+        w_max = float(self.get_parameter("w_max").value)
+        p_lin = float(self.get_parameter("cmd_vel_linear_full_percent").value)
+        p_ang = float(self.get_parameter("cmd_vel_angular_full_percent").value)
+        g_lin = (p_lin / v_max) if abs(v_max) > 1e-9 else 0.0
+        g_ang = (p_ang / w_max) if abs(w_max) > 1e-9 else 0.0
+        out = Twist()
+        out.linear.x = max(-100.0, min(100.0, float(twist.linear.x) * g_lin))
+        out.angular.z = max(-100.0, min(100.0, float(twist.angular.z) * g_ang))
+        return out
 
 
 def main(args: Optional[list] = None) -> None:

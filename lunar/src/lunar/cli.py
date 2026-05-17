@@ -69,7 +69,7 @@ def _short_segment_nav_stack_commands(
             (
                 "navigation_controller",
                 "ros2 run backend navigation_controller --ros-args "
-                "-p claim_cmd_vel:=false "
+                "-p claim_cmd_vel:=true "
                 "-p use_zone_goal:=true -p zone_goal_id:=dig -p goal_preference:=zone",
             )
         )
