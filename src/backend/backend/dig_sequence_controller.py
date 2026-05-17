@@ -15,10 +15,10 @@ dig belt (``cmd/bucket_vel`` / bucket chain) **stays commanded** through the thr
 cycles until the sequence finishes or aborts. If setup exits on the bucket position safety cap
 without IR, the same belt behavior applies.
 
-**Setup vs. drive:** In ``SETUP_IR`` the controller does not command wheel motion; it only steps
-``cmd/bucket_pos`` until IR is in range or ``bucket_safety_stop`` is hit, then switches to
-``DRIVE_FORWARD``. If the bucket count keeps changing but wheels stay still, check that phase in
-``/autonomy/dig_sequence/state``.
+**Setup vs. drive:** In ``SETUP_IR`` the controller does not command wheel motion; it steps
+``cmd/bucket_pos`` down to ``bucket_safety_stop`` (capped by ``DIG_BUCKET_POS_MAX``), then switches
+to ``DRIVE_FORWARD``. IR can still end setup early, but it is no longer allowed to block the bucket
+from reaching the max-depth start condition.
 
 **Terrain gating:** When the local grid stops updating (age ``> grid_max_age_sec``), drive legs
 still use the **last** grid for corridor checks so encoder-mode digs do not freeze; a throttled
@@ -29,10 +29,10 @@ By default ``ir_setup_mode`` is ``le``: IR is expected to **decrease** toward ``
 to** ``ir_target``, after it has been **above** ``ir_target`` or the bucket has stepped past
 ``bucket_start_pos``. Use ``ir_setup_mode:=eq`` for the legacy exact IR match.
 
-During setup, optional ``ir_bucket_gate_min_ir_drop`` (default ``2``, ``0`` disables) **gates**
-each successive ``cmd/bucket_pos`` step: after a step, publishing the next increment waits until IR
+During setup, optional ``ir_bucket_gate_min_ir_drop`` (default ``0`` / disabled) can gate each
+successive ``cmd/bucket_pos`` step: after a step, publishing the next increment waits until IR
 drops by at least that amount vs. the reading **before** the step, or ``ir_bucket_gate_timeout_sec``
-elapses.
+elapses. Keep it disabled for the simple deterministic dig cycle.
 Optional ``end_cycle_conveyor_seconds`` adds a conveyor-on window at the end of each cycle.
 Default is ``0`` (conveyor held off). ``dig-backup`` enables this to run the conveyor for ~5s
 after each cycle before repeating drive-forward.
@@ -109,9 +109,8 @@ class DigSequenceController(Node):
         self.declare_parameter("backward_linear", -35.0)
         self.declare_parameter("control_dt", 0.05)
         self.declare_parameter("ir_bucket_step_every_sec", 0.2)
-        # After each bucket_pos increment in SETUP_IR, wait for IR to drop by this much (vs reading
-        # before the step) before allowing the next increment. 0 disables the gate.
-        self.declare_parameter("ir_bucket_gate_min_ir_drop", 2)
+        # Optional legacy gate. Default off so bucket reaches max depth and starts drive cycles.
+        self.declare_parameter("ir_bucket_gate_min_ir_drop", 0)
         self.declare_parameter("ir_bucket_gate_timeout_sec", 25.0)
         self.declare_parameter("conveyor_seconds", 0.0)
         self.declare_parameter("end_cycle_conveyor_seconds", 0.0)
@@ -613,6 +612,17 @@ class DigSequenceController(Node):
         self.bucket_pos_commanded = min(DIG_BUCKET_POS_MAX, self.bucket_pos_commanded + 1)
         self.pub_bucket_pos.publish(Int16(data=int(self.bucket_pos_commanded)))
         self.ir_last_step_time = self.get_clock().now()
+
+        if self.bucket_pos_commanded >= self.bucket_safety_stop:
+            self._ir_bucket_gate_waiting = False
+            self.keep_bucket_chain_until_done = True
+            self.get_logger().warn(
+                f"Bucket reached max dig position {self.bucket_safety_stop}; starting forward/back cycles."
+            )
+            self._stop_motion()
+            self.state = DigState.DRIVE_FORWARD
+            self._reset_phase_clock()
+            return
 
         if self.ir_bucket_gate_min_drop > 0:
             self._ir_bucket_gate_waiting = True
