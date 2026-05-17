@@ -14,6 +14,15 @@ dig belt (``cmd/bucket_vel`` / bucket chain) **stays commanded** through forward
 and repeat cycles until the sequence finishes or aborts. If setup exits on the bucket position
 safety cap without IR, the same belt behavior applies.
 
+**Setup vs. drive:** In ``SETUP_IR`` the controller does not command wheel motion; it only steps
+``cmd/bucket_pos`` until IR is in range or ``bucket_safety_stop`` is hit, then switches to
+``DRIVE_FORWARD``. If the bucket count keeps changing but wheels stay still, check that phase in
+``/autonomy/dig_sequence/state``.
+
+**Terrain gating:** When the local grid stops updating (age ``> grid_max_age_sec``), drive legs
+still use the **last** grid for corridor checks so encoder-mode digs do not freeze; a throttled
+warn is logged. Increase ``grid_max_age_sec`` if your grid publishes slowly.
+
 By default ``ir_setup_mode`` is ``le``: IR is expected to **decrease** toward ``ir_target``
 (e.g. from ~70 while high to 17 at depth). The setup phase stops when IR is **less than or equal
 to** ``ir_target``, after it has been **above** ``ir_target`` or the bucket has stepped past
@@ -276,7 +285,7 @@ class DigSequenceController(Node):
         if not self._had_terrain_grid:
             return True, "no_grid_yet"
         if not self._terrain_fresh():
-            return False, "stale_grid"
+            self._maybe_warn_terrain("Dig: forward terrain grid stale — using last grid for gating (drive not blocked)")
         return self._terrain_plan_ok(self._terrain_slice_forward())
 
     def _terrain_gate_reverse(self) -> tuple[bool, str]:
@@ -285,7 +294,7 @@ class DigSequenceController(Node):
         if not self._had_terrain_grid:
             return True, "no_grid_yet"
         if not self._terrain_fresh():
-            return False, "stale_grid"
+            self._maybe_warn_terrain("Dig: reverse terrain grid stale — using last grid for gating (drive not blocked)")
         return self._terrain_plan_ok(self._terrain_slice_reverse())
 
     def _maybe_warn_terrain(self, detail: str) -> None:
@@ -293,7 +302,7 @@ class DigSequenceController(Node):
         if now - self._last_terrain_warn < 2.0:
             return
         self._last_terrain_warn = now
-        self.get_logger().warn(f"Dig drive held: {detail}")
+        self.get_logger().warn(detail)
 
     def _dig_arm_cb(self, msg: Bool) -> None:
         self._nav_dig_arm = bool(msg.data)
@@ -570,7 +579,7 @@ class DigSequenceController(Node):
                 return
         allow, detail = self._terrain_gate_forward()
         if not allow:
-            self._maybe_warn_terrain(f"forward blocked ({detail})")
+            self._maybe_warn_terrain(f"Dig drive held: forward blocked ({detail})")
             self._stop_motion()
             return
         self._publish_vel(self.forward_linear)
@@ -595,7 +604,7 @@ class DigSequenceController(Node):
             return
         allow, detail = self._terrain_gate_reverse()
         if not allow:
-            self._maybe_warn_terrain(f"reverse blocked ({detail})")
+            self._maybe_warn_terrain(f"Dig drive held: reverse blocked ({detail})")
             self._stop_motion()
             return
         self._publish_vel(self.backward_linear)
