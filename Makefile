@@ -67,7 +67,7 @@ help:
 	@echo "  make test-firmware - Native encoder quadrature unit tests (g++; no ROS)"
 	@echo "  make test-offline - Run hardware-free backend/bridge unit tests only"
 	@echo "  make ci         - lint + mission-control production build + offline tests (no Jetson)"
-	@echo "  make run profile=[robot|rc|autonomy|nav|nav-dig|test-encoder|dig] rotary=<ticks> - lunar run in Docker (dig needs rotary=; nav-dig needs LUNAR_RUN_FLAGS='--calibrated-rotary N')"
+	@echo "  make run profile=[robot|rc|autonomy|nav|nav-dig|test-encoder|dig|dig-backup] rotary=<ticks> - lunar run in Docker (dig/dig-backup need rotary= unless using LUNAR_RUN_FLAGS='--dig-timing-ms N')"
 	@echo "  make lunar-logs-pack - Zip .lunar/runs/latest (combined.log, RUN_META.txt, optional rosbag from lunar run)"
 	@echo "  make lunar-logs-path - Print path of .lunar/runs/latest"
 	@echo "  (Optional: LUNAR_RUN_FLAGS='--no-session-bag' or '--session-bag-depth' on make run)"
@@ -155,20 +155,20 @@ tune-flags:
 	@mkdir -p "$(ROOT)/$(output)"
 	cd "$(ROOT)" && PYTHONPATH="$(ROOT)/src/backend" uv run --project lunar python "$(ROOT)/src/backend/scripts/tune_flags_on_images.py" --input "$(ROOT)/$(input)" --output "$(ROOT)/$(output)"
 
-# profile: robot | rc | autonomy | nav | dig — rotary required when profile=dig
+# profile: robot | rc | autonomy | nav | dig | dig-backup
 rotary ?=
 
 # Optional extra args to `lunar run` (e.g. --no-session-bag or --session-bag-depth).
 LUNAR_RUN_FLAGS ?=
 
 run:
-ifneq ($(strip $(profile)),dig)
+ifneq ($(filter $(strip $(profile)),dig dig-backup),$(strip $(profile)))
 	docker exec -it upmoon25_ros lunar run $(profile) $(LUNAR_RUN_FLAGS)
 else
 ifeq ($(strip $(rotary)),)
-	$(error make run profile=dig requires rotary=<positive_ticks>)
+	$(error make run profile=dig or dig-backup requires rotary=<positive_ticks> unless using LUNAR_RUN_FLAGS='--dig-timing-ms <positive_ms>')
 endif
-	docker exec -it upmoon25_ros lunar run dig --calibrated-rotary $(rotary) $(LUNAR_RUN_FLAGS)
+	docker exec -it upmoon25_ros lunar run $(profile) --calibrated-rotary $(rotary) $(LUNAR_RUN_FLAGS)
 endif
 
 kill:

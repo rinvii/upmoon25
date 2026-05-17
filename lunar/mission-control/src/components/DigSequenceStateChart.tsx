@@ -6,6 +6,7 @@ const PIPELINE_WITH_ARM: DigSequencePhase[] = [
   'SETUP_IR',
   'DRIVE_FORWARD',
   'DRIVE_BACK',
+  'CYCLE_END_CONVEYOR',
   'DONE',
 ]
 
@@ -13,6 +14,7 @@ const PIPELINE_NO_ARM: DigSequencePhase[] = [
   'SETUP_IR',
   'DRIVE_FORWARD',
   'DRIVE_BACK',
+  'CYCLE_END_CONVEYOR',
   'DONE',
 ]
 
@@ -21,6 +23,7 @@ const SHORT_LABEL: Record<DigSequencePhase, string> = {
   SETUP_IR: 'IR',
   DRIVE_FORWARD: 'FWD',
   DRIVE_BACK: 'BACK',
+  CYCLE_END_CONVEYOR: 'CONV2',
   DONE: 'OK',
 }
 
@@ -48,6 +51,7 @@ function isDigSequencePhase(s: string): s is DigSequencePhase {
     s === 'SETUP_IR' ||
     s === 'DRIVE_FORWARD' ||
     s === 'DRIVE_BACK' ||
+    s === 'CYCLE_END_CONVEYOR' ||
     s === 'DONE'
   )
 }

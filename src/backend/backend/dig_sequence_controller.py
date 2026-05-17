@@ -24,7 +24,9 @@ During setup, optional ``ir_bucket_gate_min_ir_drop`` (default ``2``, ``0`` disa
 each successive ``cmd/bucket_pos`` step: after a step, publishing the next increment waits until IR
 drops by at least that amount vs. the reading **before** the step, or ``ir_bucket_gate_timeout_sec``
 elapses.
-
+Optional ``end_cycle_conveyor_seconds`` adds a conveyor-on window at the end of each cycle.
+Default is ``0`` (conveyor held off). ``dig-backup`` enables this to run the conveyor for ~5s
+after each cycle before repeating drive-forward.
 Set ``timed_drive_ms`` > 0 to run forward and backward drive legs for the same duration (ms)
 without wheel encoders. Otherwise forward stops at ``calibrated_rotary`` ticks and backward
 when the encoder reads ~zero.
@@ -73,7 +75,8 @@ class DigState(Enum):
     SETUP_IR = 1
     DRIVE_FORWARD = 2
     DRIVE_BACK = 3
-    DONE = 4
+    CYCLE_END_CONVEYOR = 4
+    DONE = 5
 
 
 class DigSequenceController(Node):
@@ -102,6 +105,7 @@ class DigSequenceController(Node):
         self.declare_parameter("ir_bucket_gate_min_ir_drop", 2)
         self.declare_parameter("ir_bucket_gate_timeout_sec", 25.0)
         self.declare_parameter("conveyor_seconds", 0.0)
+        self.declare_parameter("end_cycle_conveyor_seconds", 0.0)
         self.declare_parameter("phase_timeout_sec", 180.0)
         self.declare_parameter("wait_for_nav_dig_arm", False)
         # Same local traversability map as short-segment nav (`local_terrain_grid` → OccupancyGrid).
@@ -154,6 +158,7 @@ class DigSequenceController(Node):
         self.ir_bucket_gate_min_drop = max(0, int(self.get_parameter("ir_bucket_gate_min_ir_drop").value))
         self.ir_bucket_gate_timeout_sec = float(self.get_parameter("ir_bucket_gate_timeout_sec").value)
         self.conveyor_seconds = 0.0
+        self.end_cycle_conveyor_seconds = max(0.0, float(self.get_parameter("end_cycle_conveyor_seconds").value))
         self.phase_timeout_sec = float(self.get_parameter("phase_timeout_sec").value)
         self._use_local_terrain_grid = bool(self.get_parameter("use_local_terrain_grid").value)
         self._grid_topic = str(self.get_parameter("grid_topic").value).strip() or "/autonomy/local_terrain_grid"
@@ -328,6 +333,8 @@ class DigSequenceController(Node):
 
     def _publish_dig_state(self) -> None:
         conv_rem: float | None = None
+        if self.conveyor_until is not None and self.state == DigState.CYCLE_END_CONVEYOR:
+            conv_rem = max(0.0, (self.conveyor_until - self.get_clock().now()).nanoseconds / 1e9)
         fwd_ok, fwd_r = self._terrain_gate_forward()
         rev_ok, rev_r = self._terrain_gate_reverse()
         payload = {
@@ -371,8 +378,20 @@ class DigSequenceController(Node):
         self.pub_dig_state.publish(m)
 
     def _sync_conveyor_output(self) -> None:
-        """This simplified dig profile never activates the conveyor."""
-        self.pub_conveyor.publish(Int16(data=0))
+        """Conveyor runs only during optional end-of-cycle conveyor window."""
+        if self.state != DigState.CYCLE_END_CONVEYOR:
+            self.pub_conveyor.publish(Int16(data=0))
+            return
+        if self._conveyor_end_applied:
+            self.pub_conveyor.publish(Int16(data=0))
+            return
+        if self.conveyor_until is None:
+            return
+        now = self.get_clock().now()
+        if now < self.conveyor_until:
+            self.pub_conveyor.publish(Int16(data=1))
+        else:
+            self.pub_conveyor.publish(Int16(data=0))
 
     def _sync_bucket_chain_output(self) -> None:
         """Keep the bucket chain spinning during active dig phases."""
@@ -396,6 +415,17 @@ class DigSequenceController(Node):
         self._ir_bucket_gate_waiting = False
 
         if self.cycle_counter < self.max_cycles_le:
+            if self.end_cycle_conveyor_seconds > 0.0:
+                self.get_logger().info(
+                    f"Starting end-of-cycle conveyor pass for {self.end_cycle_conveyor_seconds:.2f}s."
+                )
+                self.state = DigState.CYCLE_END_CONVEYOR
+                self._conveyor_end_applied = False
+                self.conveyor_until = self.get_clock().now() + rclpy.duration.Duration(
+                    seconds=self.end_cycle_conveyor_seconds
+                )
+                self._reset_phase_clock()
+                return
             self.get_logger().info("Repeating drive-forward phase.")
             self.state = DigState.DRIVE_FORWARD
             self.conveyor_until = None
@@ -449,6 +479,8 @@ class DigSequenceController(Node):
                 self._tick_drive_forward()
             elif self.state == DigState.DRIVE_BACK:
                 self._tick_drive_back()
+            elif self.state == DigState.CYCLE_END_CONVEYOR:
+                self._tick_cycle_end_conveyor()
 
             self._sync_conveyor_output()
             self._sync_bucket_chain_output()
@@ -591,6 +623,21 @@ class DigSequenceController(Node):
             return
         self._publish_vel(self.backward_linear)
 
+    def _tick_cycle_end_conveyor(self) -> None:
+        if self.conveyor_until is None:
+            self.conveyor_until = self.get_clock().now() + rclpy.duration.Duration(
+                seconds=self.end_cycle_conveyor_seconds
+            )
+        now = self.get_clock().now()
+        if now < self.conveyor_until:
+            return
+        if self._conveyor_end_applied:
+            return
+        self._conveyor_end_applied = True
+        self.get_logger().info("End-of-cycle conveyor pass complete; repeating drive-forward phase.")
+        self.state = DigState.DRIVE_FORWARD
+        self.conveyor_until = None
+        self._reset_phase_clock()
 def main(args=None):
     rclpy.init(args=args)
     node = DigSequenceController()

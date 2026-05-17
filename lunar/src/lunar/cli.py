@@ -41,6 +41,7 @@ class RunProfile(str, Enum):
     NAV_DIG = "nav-dig"
     TEST_ENCODER = "test-encoder"
     DIG = "dig"
+    DIG_BACKUP = "dig-backup"
 
 
 def _short_segment_nav_stack_commands(
@@ -1043,6 +1044,8 @@ def run(
             "other stacks (use `--skip-cleanup` if robot is already running and you need `/sensor/ir`). "
             "For nav→dig prefer nav-dig. Writes ``.lunar/runs/...`` logs and optional rosbag. "
             "Drive phases: --calibrated-rotary (encoder) or --dig-timing-ms (timed forward/back).\n\n"
+            "- dig-backup: Same as dig, plus an extra end-of-cycle conveyor ON window "
+            "(~5s) before each repeat.\n\n"
             "Other profiles:\n"
             "- rc: Joystick / RViz (optional --record).\n"
             "- autonomy: Planner / transport / command stack.\n"
@@ -1181,9 +1184,10 @@ def run(
     elif profile == RunProfile.TEST_ENCODER:
         cmds.append(("encoder_test", "ros2 launch frontend encoder_test_launch.py"))
 
-    elif profile == RunProfile.DIG:
+    elif profile in (RunProfile.DIG, RunProfile.DIG_BACKUP):
+        is_backup_dig = profile == RunProfile.DIG_BACKUP
         use_ms, fwd_val = _resolve_dig_drive_params(
-            profile_label="dig",
+            profile_label="dig-backup" if is_backup_dig else "dig",
             calibrated_rotary=calibrated_rotary,
             dig_timing_ms=dig_timing_ms,
         )
@@ -1203,6 +1207,8 @@ def run(
         else:
             dig_cmd_list.extend(["-p", f"calibrated_rotary:={fwd_val}", "-p", f"encoder_side:={side}"])
         dig_cmd_list.extend(["-p", f"max_cycles_le:={int(dig_cycles)}"])
+        if is_backup_dig:
+            dig_cmd_list.extend(["-p", "end_cycle_conveyor_seconds:=5.0"])
         dig_shell_cmd = " ".join(shlex.quote(x) for x in dig_cmd_list)
 
         if dry_run:
@@ -1233,7 +1239,8 @@ def run(
         ensure_env()
 
         typer.secho(
-            "Starting dig sequence in the foreground... (Ctrl-C to abort; ensure `lunar run robot` is already up.)",
+            f"Starting {profile.value} sequence in the foreground... "
+            "(Ctrl-C to abort; ensure `lunar run robot` is already up.)",
             fg=typer.colors.YELLOW,
         )
 
@@ -1278,7 +1285,7 @@ def run(
 
             _run_shell_foreground_tee(dig_shell_cmd, combined_log)
         except KeyboardInterrupt:
-            typer.echo("\nStopped dig (KeyboardInterrupt).")
+            typer.echo(f"\nStopped {profile.value} (KeyboardInterrupt).")
         finally:
             # With --skip-cleanup and no session bag, state.json may still track `lunar run robot`;
             # avoid kill_all() so the robot stack survives dig exit. Rosbag spawns replace state
@@ -1286,7 +1293,7 @@ def run(
             if (not skip_cleanup) or session_bag:
                 kill_all()
 
-        typer.echo(f"Dig session finished. Logs under {session_dir}")
+        typer.echo(f"{profile.value} session finished. Logs under {session_dir}")
         return
 
     if dry_run:
