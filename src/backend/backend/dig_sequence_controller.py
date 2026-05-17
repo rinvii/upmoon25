@@ -16,10 +16,10 @@ cycles until the sequence finishes or aborts. If setup exits on the bucket posit
 without IR, the same belt behavior applies.
 
 **Setup vs. drive:** In ``SETUP_IR`` the controller does not command wheel motion; it steps
-``cmd/bucket_pos`` from ``bucket_start_pos`` to ``bucket_drive_start_pos`` (default 30), then
-switches to ``DRIVE_FORWARD``. IR can still end setup early, but it is no longer allowed to block
-the bucket from reaching the initial wheel-cycle start condition. Later cycle bumps can increment
-the bucket farther, but never past ``DIG_BUCKET_POS_MAX`` (default 50).
+``cmd/bucket_pos`` to ``bucket_start_pos`` / ``bucket_drive_start_pos`` (default 30), then switches
+to ``DRIVE_FORWARD``. IR can still end setup early, but it is no longer allowed to block the
+initial wheel-cycle start condition. Later cycle bumps can increment the bucket farther, but never
+past ``DIG_BUCKET_POS_MAX`` (default 50).
 
 **Terrain gating:** When the local grid stops updating (age ``> grid_max_age_sec``), drive legs
 still use the **last** grid for corridor checks so encoder-mode digs do not freeze; a throttled
@@ -103,7 +103,7 @@ class DigSequenceController(Node):
         self.declare_parameter("forward_encoder_increases", True)
         self.declare_parameter("ir_setup_mode", "le")
         self.declare_parameter("ir_target", 17)
-        self.declare_parameter("bucket_start_pos", 20)
+        self.declare_parameter("bucket_start_pos", DIG_BUCKET_DRIVE_START_POS)
         self.declare_parameter("bucket_drive_start_pos", DIG_BUCKET_DRIVE_START_POS)
         self.declare_parameter("bucket_safety_stop", DIG_BUCKET_POS_MAX)
         self.declare_parameter("bucket_chain_speed", 40)
